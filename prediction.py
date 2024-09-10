@@ -1,11 +1,11 @@
 import cv2
 from ultralytics import YOLO
-import random
+from random import choice
 # import subprocess
 
 test_link = 'image.png'
 model = YOLO('yolov8n.pt')
-VIDEO_PATH = 'vecteezy_car-and-truck-traffic-on-the-highway-in-europe-poland_7957364.mp4'
+VIDEO_PATH = '20090-307115630_small.mp4'
 
 # streamlink_cmd = "streamlink https://www.twitch.tv/mobotixwebcamsrussia best --stream-url"
 # stream_url = subprocess.check_output(streamlink_cmd, shell=True).decode("utf-8").strip()
@@ -14,10 +14,14 @@ cap = cv2.VideoCapture(VIDEO_PATH)
 cv2.namedWindow('YOLOv8 Real-Time Predictions', cv2.WINDOW_NORMAL)
 cv2.setWindowProperty('YOLOv8 Real-Time Predictions', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 tracking_objects = {}
+position_data = {} # {id: [center_past, center_current]}
+counted_ids = []
+cars_moving_downward = 0
+cars_moving_upward = 0
 
 def blackout_top_bottom_third(image):
     height, width, _ = image.shape
-    top_boundary = height // 3
+    top_boundary = int(height / 1.5)
     image[0:top_boundary, :] = 0
     
     return image
@@ -27,7 +31,7 @@ def update_ver_bboxes():
     
     for obj in list(tracking_objects.keys()):
         
-        if tracking_objects[obj][-1] > 150:
+        if tracking_objects[obj][-1] > 50:
             keys_to_delete.append(obj)  # Add the key to the list for deletion
         
         else:
@@ -36,7 +40,11 @@ def update_ver_bboxes():
                                      tracking_objects[obj][4] + 1)
 
     for key in keys_to_delete:
-        del tracking_objects[key]
+      del tracking_objects[key]
+      del position_data[key]
+      
+      if key in counted_ids:
+        counted_ids.remove(key)
 
 def assign_id(bbox_center, new_x1, new_y1, new_x2, new_y2):
   update_ver_bboxes()
@@ -46,61 +54,84 @@ def assign_id(bbox_center, new_x1, new_y1, new_x2, new_y2):
     y1 = tracking_objects[i][1]
     x2 = tracking_objects[i][2]
     y2 = tracking_objects[i][3]
-    
+        
     if (x1 <= bbox_center[0] <= x2) and (y1 <= bbox_center[1] <= y2):
       tracking_objects[i] = (new_x1, new_y1, new_x2, new_y2, 1)
       return i
     
-  new_id = random.randint(1, 99)
+  new_id = choice([i for i in range(1, 100) if i not in tracking_objects.keys()])
   tracking_objects[new_id] = (new_x1, new_y1, new_x2, new_y2, 1)
   return new_id
 
 def id_plate(id_, img, x1, y1):
-  plate_len = 190
-  plate_wd = 48
-  radius = plate_wd // 2
+  plate_len = 90
+  plate_wd = 28
+  radius = int(plate_wd / 2)
   
   if id_ < 10:
-    plate_len = 150
+    plate_len = 70
   
   cv2.rectangle(img, (x1, y1 - plate_wd), (x1 + plate_len, y1), color=(232, 46, 195), thickness=-1)
   cv2.circle(img, (x1, y1 - radius), radius=radius, color=(232, 46, 195), thickness=-1)
   cv2.circle(img, (x1 + plate_len, y1 - radius), radius=radius, color=(232, 46, 195), thickness=-1)
-  cv2.putText(img, f'{id_}:veh', (x1 - 10, y1 - 3), cv2.FONT_HERSHEY_DUPLEX, 2, (255, 255, 255), 2)
+  cv2.putText(img, f'{id_}:veh', (x1 - 10, y1 - 3), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
 
-def counter(img):
-  height, width, _ = img.shape
-  start_point = (50, height - int(height / 3))
-  end_point = (width - 50, height - int(height / 3))
-  
-  cv2.line(img, start_point, end_point, (37, 194, 58), thickness=8)
+def traffic_counter():
+  global cars_moving_upward, cars_moving_downward  # Use global variables
+    
+  for i in tracking_objects:
+    if i not in counted_ids:
+      past_y = position_data[i][0][1]
+      current_y = position_data[i][1][1]
+          
+      if past_y != current_y:
+        counted_ids.append(i)
+              
+        if past_y > current_y:  # Moving upward
+          cars_moving_upward += 1
+                  
+        elif past_y < current_y:  # Moving downward
+          cars_moving_downward += 1
+          
+def traffic_count_plate(img):
+  cv2.rectangle(img, (100, 100 - 28), (500, 160), color=(232, 46, 195), thickness=-1)
+  cv2.putText(img, f'Downward cars: {cars_moving_downward}', (100, 100), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
+  cv2.putText(img, f'Upward cars: {cars_moving_upward}', (100, 150), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
 
-def draw_UI(img, results): #bboxes, ids
+def draw_UI(img, results):
   
     for result in results:
       
         for bbox in result.boxes:
             x1, y1, x2, y2 = [int(i) for i in bbox.xyxy[0]]
-            cv2.rectangle(img, (x1, y1), (x2, y2), color=(232, 46, 195), thickness=8)
+            cv2.rectangle(img, (x1, y1), (x2, y2), color=(232, 46, 195), thickness=6)
 
             bbox_center = (int((x1 + x2) / 2), int((y1 + y2) / 2))
             # cv2.circle(img, bbox_center, radius=4, color=(0, 0, 255), thickness=-1) # bbox center
 
-            coef = 4
+            coef = 8
             x1_ver_box = x1 + int((x2 - x1) / coef)
-            y1_ver_box = y1 + int((y2 - y1) / coef)  
+            y1_ver_box = y1 + int((y2 - y1) / coef)
             
             x2_ver_box = x2 - int((x2 - x1) / coef)  
             y2_ver_box = y2 - int((y2 - y1) / coef)
             
-            # draw id text
             id_ = assign_id(bbox_center, x1_ver_box, y1_ver_box, x2_ver_box, y2_ver_box)
-            id_plate(id_, img, x1, y1)
-            counter(img)
             
+            #update past and current bbox center position
+            if id_ not in position_data:
+              position_data[id_] = [bbox_center, bbox_center]
+              
+            else:
+              position_data[id_] = [position_data[id_][1], bbox_center]
+              
+            id_plate(id_, img, x1, y1)
+            traffic_counter()
+            traffic_count_plate(img)
+                                  
             # Draw the smaller verification box inside the original bounding box
             # cv2.rectangle(img, (x1_ver_box, y1_ver_box), (x2_ver_box, y2_ver_box), color=(0, 255, 0), thickness=2)
-
+            
 while True:
   ret, frame = cap.read()
   preprocessed_frame = blackout_top_bottom_third(frame.copy())
@@ -115,6 +146,6 @@ while True:
   # for i in tracking_objects.values():
   #   cv2.rectangle(frame, (i[0], i[1]), (i[2], i[3]), color=(0, 255, 0), thickness=2)
     
-  results = model(preprocessed_frame)
+  results = model(preprocessed_frame, classes=[2, 7])
   draw_UI(frame, results)
   cv2.imshow('YOLOv8 Real-Time Predictions', frame)
