@@ -1,50 +1,75 @@
 import cv2
 from ultralytics import YOLO
 from random import choice
-# import subprocess
+import time
+from datetime import datetime
+import pandas as pd
 
-test_link = 'image.png'
-model = YOLO('yolov8n.pt')
-VIDEO_PATH = '20090-307115630_small.mp4'
-
-# streamlink_cmd = "streamlink https://www.twitch.tv/mobotixwebcamsrussia best --stream-url"
-# stream_url = subprocess.check_output(streamlink_cmd, shell=True).decode("utf-8").strip()
+model = YOLO(r'runs\detect\train\weights\best.pt')
+# model.to('cuda')
+VIDEO_PATH = r'data\part1.mkv'
 
 cap = cv2.VideoCapture(VIDEO_PATH)
 cv2.namedWindow('YOLOv8 Real-Time Predictions', cv2.WINDOW_NORMAL)
 cv2.setWindowProperty('YOLOv8 Real-Time Predictions', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
 tracking_objects = {}
 position_data = {} # {id: [center_past, center_current]}
 counted_ids = []
 cars_moving_downward = 0
 cars_moving_upward = 0
 
+start_time = time.time()
+record_interval = 5
+file_name = 'traffic_data.xlsx'
+
+def record_to_excel():
+  global cars_moving_upward, cars_moving_downward
+  current_time = datetime.now()
+  
+  data = {
+    'Year': [2024],
+    'Month': [current_time.month],
+    'Day': [current_time.day],
+    'Hours': [current_time.hour],
+    'Minutes': [current_time.minute],
+    'Seconds': [current_time.second],
+    'Downward cars': [cars_moving_downward],
+    'Upward cars': [cars_moving_upward]
+    }
+  
+  df = pd.DataFrame(data)
+  reader = pd.read_excel(file_name, engine='openpyxl')
+  writer = pd.ExcelWriter(file_name, mode='a', engine='openpyxl', if_sheet_exists='overlay')
+  df.to_excel(writer, index=False, header=False, startrow=len(reader) + 1)
+  writer.close()
+
 def blackout_top_bottom_third(image):
-    height, width, _ = image.shape
-    top_boundary = int(height / 1.5)
-    image[0:top_boundary, :] = 0
-    
-    return image
+  height, width, _ = image.shape
+  top_boundary = int(height / 1.5)
+  image[0:top_boundary, :] = 0
+  
+  return image
 
 def update_ver_bboxes():
-    keys_to_delete = [] # Create a list of keys to delete
-    
-    for obj in list(tracking_objects.keys()):
-        
-        if tracking_objects[obj][-1] > 50:
-            keys_to_delete.append(obj)  # Add the key to the list for deletion
-        
-        else:
-            tracking_objects[obj] = (tracking_objects[obj][0], tracking_objects[obj][1], 
-                                     tracking_objects[obj][2], tracking_objects[obj][3], 
-                                     tracking_objects[obj][4] + 1)
-
-    for key in keys_to_delete:
-      del tracking_objects[key]
-      del position_data[key]
+  keys_to_delete = []
+  
+  for obj in list(tracking_objects.keys()):
       
-      if key in counted_ids:
-        counted_ids.remove(key)
+    if tracking_objects[obj][-1] > 50:
+      keys_to_delete.append(obj)
+    
+    else:
+      tracking_objects[obj] = (tracking_objects[obj][0], tracking_objects[obj][1], 
+                                tracking_objects[obj][2], tracking_objects[obj][3], 
+                                tracking_objects[obj][4] + 1)
+
+  for key in keys_to_delete:
+    del tracking_objects[key]
+    del position_data[key]
+    
+    if key in counted_ids:
+      counted_ids.remove(key)
 
 def assign_id(bbox_center, new_x1, new_y1, new_x2, new_y2):
   update_ver_bboxes()
@@ -77,7 +102,7 @@ def id_plate(id_, img, x1, y1):
   cv2.putText(img, f'{id_}:veh', (x1 - 10, y1 - 3), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
 
 def traffic_counter():
-  global cars_moving_upward, cars_moving_downward  # Use global variables
+  global cars_moving_upward, cars_moving_downward
     
   for i in tracking_objects:
     if i not in counted_ids:
@@ -100,41 +125,42 @@ def traffic_count_plate(img):
 
 def draw_UI(img, results):
   
-    for result in results:
+  for result in results:
+    
+    for bbox in result.boxes:
+      x1, y1, x2, y2 = [int(i) for i in bbox.xyxy[0]]
+      cv2.rectangle(img, (x1, y1), (x2, y2), color=(232, 46, 195), thickness=6)
+
+      bbox_center = (int((x1 + x2) / 2), int((y1 + y2) / 2))
+      # cv2.circle(img, bbox_center, radius=4, color=(0, 0, 255), thickness=-1) # bbox center
+
+      coef = 8
+      x1_ver_box = x1 + int((x2 - x1) / coef)
+      y1_ver_box = y1 + int((y2 - y1) / coef)
       
-        for bbox in result.boxes:
-            x1, y1, x2, y2 = [int(i) for i in bbox.xyxy[0]]
-            cv2.rectangle(img, (x1, y1), (x2, y2), color=(232, 46, 195), thickness=6)
+      x2_ver_box = x2 - int((x2 - x1) / coef)  
+      y2_ver_box = y2 - int((y2 - y1) / coef)
+      
+      id_ = assign_id(bbox_center, x1_ver_box, y1_ver_box, x2_ver_box, y2_ver_box)
+      
+      # update past and current bbox center position
+      if id_ not in position_data:
+        position_data[id_] = [bbox_center, bbox_center]
+        
+      else:
+        position_data[id_] = [position_data[id_][1], bbox_center]
+        
+      id_plate(id_, img, x1, y1)
+      traffic_counter()
+    
+    traffic_count_plate(img)
+                            
+      # Draw the smaller verification box inside the original bounding box
+      # cv2.rectangle(img, (x1_ver_box, y1_ver_box), (x2_ver_box, y2_ver_box), color=(0, 255, 0), thickness=2)
 
-            bbox_center = (int((x1 + x2) / 2), int((y1 + y2) / 2))
-            # cv2.circle(img, bbox_center, radius=4, color=(0, 0, 255), thickness=-1) # bbox center
-
-            coef = 8
-            x1_ver_box = x1 + int((x2 - x1) / coef)
-            y1_ver_box = y1 + int((y2 - y1) / coef)
-            
-            x2_ver_box = x2 - int((x2 - x1) / coef)  
-            y2_ver_box = y2 - int((y2 - y1) / coef)
-            
-            id_ = assign_id(bbox_center, x1_ver_box, y1_ver_box, x2_ver_box, y2_ver_box)
-            
-            #update past and current bbox center position
-            if id_ not in position_data:
-              position_data[id_] = [bbox_center, bbox_center]
-              
-            else:
-              position_data[id_] = [position_data[id_][1], bbox_center]
-              
-            id_plate(id_, img, x1, y1)
-            traffic_counter()
-            traffic_count_plate(img)
-                                  
-            # Draw the smaller verification box inside the original bounding box
-            # cv2.rectangle(img, (x1_ver_box, y1_ver_box), (x2_ver_box, y2_ver_box), color=(0, 255, 0), thickness=2)
-            
 while True:
   ret, frame = cap.read()
-  preprocessed_frame = blackout_top_bottom_third(frame.copy())
+  # preprocessed_frame = blackout_top_bottom_third(frame.copy())
   
   if not ret or cv2.waitKey(1) == ord('q'):
         print('Error/Stream finished')
@@ -146,6 +172,12 @@ while True:
   # for i in tracking_objects.values():
   #   cv2.rectangle(frame, (i[0], i[1]), (i[2], i[3]), color=(0, 255, 0), thickness=2)
     
-  results = model(preprocessed_frame, classes=[2, 7])
+  results = model(frame, classes=[2, 7])
   draw_UI(frame, results)
   cv2.imshow('YOLOv8 Real-Time Predictions', frame)
+  
+  # if time.time() - start_time >= record_interval:
+  #   record_to_excel()
+  #   cars_moving_downward = 0
+  #   cars_moving_upward = 0
+  #   start_time = time.time()
