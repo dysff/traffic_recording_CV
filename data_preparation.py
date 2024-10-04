@@ -1,8 +1,8 @@
-#----------------------------CUT VIDEO EVERY 3 SECS
+#----------------------------CUT VIDEO EVERY X SECS
 # import cv2
 # import os
 
-# video_link = r'data\part2.mkv'
+# video_link = r'data\part5.mkv'
 # output_dir = r'data\training_samples_cutted_fullsize'
 # file_names_without_extensions = []
 # count = 0
@@ -18,9 +18,9 @@
 # fps = cap.get(cv2.CAP_PROP_FPS)
 # total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-# seconds = 5
+# seconds = 5 # Set seconds here
 
-# for frame in range(0, total_frames, int(fps*seconds)): #every 3 secs
+# for frame in range(0, total_frames, int(fps*seconds)):
 #     cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
 #     ret, frame = cap.read()
     
@@ -37,6 +37,7 @@
 # import os
 # import cv2
 # import math
+# import numpy as np
 
 # def rotate_point(point, angle):
 #     ox, oy = (320, 320)#origin
@@ -57,11 +58,40 @@
   
 #   return [class_id, x_center_pixel, y_center_pixel, bbox_width_pixel, bbox_height_pixel]
 
+# def duplicate_annotation(annotation, aug_type):
+#   source_file = annotations_path + f'/{annotation}.txt'
+#   destination_file = annotations_path + f'/aug_{aug_type}_{annotation}.txt'
+  
+#   with open(source_file, 'r') as src_file:
+#     with open(destination_file, 'w') as dest_file:
+      
+#       for line in src_file:
+#         dest_file.write(line)
+
 # def rotate_img(img, angle):
 #   rotation_matrix = cv2.getRotationMatrix2D((320, 320), angle, 1.0)
 #   rotated_img = cv2.warpAffine(img, rotation_matrix, (640, 640))
   
 #   return rotated_img
+
+# def black_lined_aug(img_name, img, step, bar_width):
+#   width, height, _ = img.shape
+
+#   for i in range(0, width, step):
+#     point1 = (i, 0)
+#     point2 = (i + bar_width, height)
+#     cv2.rectangle(img, point1, point2, (0, 0, 0), -1)
+    
+#   cv2.imwrite(images_path + f'/aug_lined_{img_name}.png', img)
+#   duplicate_annotation(img_name, 'lined')
+        
+# def brightness_aug(img_name, img, factor):
+#   hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+#   hsv[:, :, 2] = np.clip(hsv[:, :, 2] * factor, 0, 255)
+#   bright_img = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+  
+#   cv2.imwrite(images_path + f'/aug_brightness_{factor}_{img_name}.png', bright_img)
+#   duplicate_annotation(img_name, f'brightness_{factor}')
 
 # def new_annotation(yolo_bbox, angle):
 #   class_id, x_center_pixel, y_center_pixel, bbox_width_pixel, bbox_height_pixel = yolo_to_pixel_coord(yolo_bbox)#put center here
@@ -89,14 +119,16 @@
 # annotations_path = 'data/train/labels'
 # images_path = 'data/train/images'
 # angles = [30, -30, 45, -45]
+# brightness_factors = [0.5, 1.5]
 
 # for annotations in (os.listdir(annotations_path)):#all annotations for picture
-#   img_path = images_path + f'/{annotations[:-4]}.png'
+#   img_filename = annotations[:-4]
+#   img_path = images_path + f'/{img_filename}.png'
 #   img = cv2.imread(img_path)
   
 #   for angle in angles:
 #     rotated_img = rotate_img(img, angle)
-#     cv2.imwrite(images_path + f'/aug_{angle}_{annotations[:-4]}.png', rotated_img)
+#     cv2.imwrite(images_path + f'/aug_{angle}_{img_filename}.png', rotated_img)
   
 #     with open(annotations_path + f'/{annotations}', 'r') as file:#open first annotation_txt file
 #       lines = file.readlines()#read all bboxes
@@ -116,46 +148,53 @@
       
 #       for line in annotation:
 #         filew.write(' '.join(map(str, line)) + '\n')
-
-#----------------------------RESIZE TO 640X640
-# import os
-# import cv2
-
-# input_path = 'data/training_samples_fullsize'
-# output_path = 'data/training_samples_resized'
-
-# for image_name in (os.listdir(input_path)):
-#   img = cv2.imread(input_path + f'/{image_name}')
-#   resized_img = cv2.resize(img, (640, 640))
-#   cv2.imwrite(output_path + f'/{image_name}', resized_img)
+  
+#   # black_lined_aug(img_filename, img.copy(), 15, 3)
+  
+#   for factor in brightness_factors:
+#     brightness_aug(img_filename, img.copy(), factor)
 
 #----------------------------VISUALIZE ANNOTATIONS ON PICTURES
+import os
+import cv2
+
+filename = 'aug_45_092ce2ff-1685'
+img = cv2.imread(f'data/train/images/{filename}.png')
+
+with open(f'data/train/labels/{filename}.txt', 'r') as file:
+  lines = file.readlines()
+
+annotations = []
+for line in lines:
+    values = list(map(float, line.split()))  # Convert string to float
+    annotations.append(values)
+
+for i in annotations:
+  x_center = i[1] * 640
+  y_center = i[2] * 640
+  width = i[3] * 640
+  height = i[4] * 640
+  
+  point1 = (int(x_center - width / 2), int(y_center - height / 2))
+  point2 = (int(x_center + width / 2), int(y_center + height / 2))
+  
+  cv2.rectangle(img, point1, point2, (0, 255, 0), 2)
+  
+cv2.imshow('img', img)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
+
+#----------------------------RESTRICT THE IMAGE AND RESIZE TO 640X640
 # import os
 # import cv2
 
-# img = cv2.imread(r'data\train\images\aug_45_f073860c-69.png')
+# img_input_path = r'data\training_samples_cutted_fullsize'
+# img_output_path = r'data\training_samples_cutted_fullsize'
 
-# with open(r'data\train\labels\aug_45_f073860c-69.txt', 'r') as file:
-#   lines = file.readlines()
-
-# annotations = []
-# for line in lines:
-#     values = list(map(float, line.split()))  # Convert string to float
-#     annotations.append(values)
-
-# for i in annotations:
-#   x_center = i[1] * 640
-#   y_center = i[2] * 640
-#   width = i[3] * 640
-#   height = i[4] * 640
-  
-#   point1 = (int(x_center - width / 2), int(y_center - height / 2))
-#   point2 = (int(x_center + width / 2), int(y_center + height / 2))
-  
-#   cv2.rectangle(img, point1, point2, (0, 255, 0), 2)
-  
-# cv2.imshow('img', img)
-# cv2.waitKey(0)
-# cv2.destroyAllWindows()
-
-#----------------------------
+# for img_filename in (os.listdir(img_input_path)):
+#   print(img_filename)
+#   img = cv2.imread(img_input_path + f'\{img_filename}')
+#   cv2.rectangle(img, (1300, 0), (1920, 372), (0, 0, 0), -1)
+#   cv2.rectangle(img, (0, 0), (264, 364), (0, 0, 0), -1)
+#   img_resized = cv2.resize(img, (640, 640))
+#   cv2.imwrite(img_output_path + f'\{img_filename}', img_resized)

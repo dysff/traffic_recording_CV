@@ -5,9 +5,9 @@ import time
 from datetime import datetime
 import pandas as pd
 
-model = YOLO(r'runs\detect\train\weights\best.pt')
-# model.to('cuda')
-VIDEO_PATH = r'data\part1.mkv'
+model = YOLO(r'runs\detect\train4\weights\best.pt')
+model.to('cuda')
+VIDEO_PATH = r'data\testing_videos\2024-10-01 15-11-42 (online-video-cutter.com).mp4'
 
 cap = cv2.VideoCapture(VIDEO_PATH)
 cv2.namedWindow('YOLOv8 Real-Time Predictions', cv2.WINDOW_NORMAL)
@@ -16,17 +16,27 @@ cv2.setWindowProperty('YOLOv8 Real-Time Predictions', cv2.WND_PROP_FULLSCREEN, c
 tracking_objects = {}
 position_data = {} # {id: [center_past, center_current]}
 counted_ids = []
-cars_moving_downward = 0
 cars_moving_upward = 0
+cars_moving_downward = 0
+cars_moving_left = 0
+cars_moving_right = 0
 
 start_time = time.time()
-record_interval = 5
+record_interval = 15
 file_name = 'traffic_data.xlsx'
 
-def record_to_excel():
-  global cars_moving_upward, cars_moving_downward
+def record_to_excel(roadname, orientation, startpoint, switch):
+  global cars_moving_upward, cars_moving_downward, cars_moving_left, cars_moving_right
   current_time = datetime.now()
   
+  if switch:
+    direction_1 = cars_moving_upward
+    direction_2 = cars_moving_downward
+    
+  else:
+    direction_1 = cars_moving_left
+    direction_2 = cars_moving_right
+    
   data = {
     'Year': [2024],
     'Month': [current_time.month],
@@ -34,8 +44,11 @@ def record_to_excel():
     'Hours': [current_time.hour],
     'Minutes': [current_time.minute],
     'Seconds': [current_time.second],
-    'Downward cars': [cars_moving_downward],
-    'Upward cars': [cars_moving_upward]
+    'Roadname': [roadname],
+    'Orientation': [orientation],
+    'Direction1': [direction_1],
+    'Direction2': [direction_2],
+    'Startpoint': [startpoint]
     }
   
   df = pd.DataFrame(data)
@@ -44,19 +57,34 @@ def record_to_excel():
   df.to_excel(writer, index=False, header=False, startrow=len(reader) + 1)
   writer.close()
 
-def blackout_top_bottom_third(image):
-  height, width, _ = image.shape
-  top_boundary = int(height / 1.5)
-  image[0:top_boundary, :] = 0
+def predicting_area(x_top, y_top, x_down, y_down, img):
+  """
+  Restricted area on the picture, where
+  model is predicting objects(it doesn't see any objects beyond this area)
   
-  return image
-
+  Parameters
+  ----------
+  x_top : x of the upper-left corner of the box
+  y_top : y of the upper-left corner of the box
+  x_down : x of the lower-right corner of the box
+  y_down : y of the lower-right corner of the box
+  img : image
+  """
+  height, width, _ = img.shape
+  
+  cv2.rectangle(img, (0, 0), (width, y_top), (0, 0, 0), -1)#upper area
+  cv2.rectangle(img, (0, y_top), (x_top, y_down), (0, 0, 0), -1)#left area
+  cv2.rectangle(img, (0, y_down), (width, height), (0, 0, 0), -1)#lower area
+  cv2.rectangle(img, (x_down, y_top), (width, y_down), (0, 0, 0), -1)#right area
+  
+  return img
+  
 def update_ver_bboxes():
   keys_to_delete = []
   
   for obj in list(tracking_objects.keys()):
       
-    if tracking_objects[obj][-1] > 50:
+    if tracking_objects[obj][-1] > 35:
       keys_to_delete.append(obj)
     
     else:
@@ -72,7 +100,16 @@ def update_ver_bboxes():
       counted_ids.remove(key)
 
 def assign_id(bbox_center, new_x1, new_y1, new_x2, new_y2):
-  update_ver_bboxes()
+  """
+  Parameters
+  ----------
+  bbox_center : current bbox center tuple(x, y)
+  new_x1 : x of the upper-left corner of the bbox
+  new_y1 : y of the upper-left corner of the bbox
+  new_x2 : x of the lower-right corner of the bbox
+  new_y2 : y of the lower-right corner of the bbox
+  """
+  update_ver_bboxes()#Delete untracked IDs
   
   for i in tracking_objects:
     x1 = tracking_objects[i][0]
@@ -80,12 +117,12 @@ def assign_id(bbox_center, new_x1, new_y1, new_x2, new_y2):
     x2 = tracking_objects[i][2]
     y2 = tracking_objects[i][3]
         
-    if (x1 <= bbox_center[0] <= x2) and (y1 <= bbox_center[1] <= y2):
+    if (x1 <= bbox_center[0] <= x2) and (y1 <= bbox_center[1] <= y2):#Check if bbox center is located within the boundaries
       tracking_objects[i] = (new_x1, new_y1, new_x2, new_y2, 1)
       return i
     
-  new_id = choice([i for i in range(1, 100) if i not in tracking_objects.keys()])
-  tracking_objects[new_id] = (new_x1, new_y1, new_x2, new_y2, 1)
+  new_id = choice([i for i in range(1, 100) if i not in tracking_objects.keys()])#Create new random ID
+  tracking_objects[new_id] = (new_x1, new_y1, new_x2, new_y2, 1)#Track new ID
   return new_id
 
 def id_plate(id_, img, x1, y1):
@@ -101,29 +138,47 @@ def id_plate(id_, img, x1, y1):
   cv2.circle(img, (x1 + plate_len, y1 - radius), radius=radius, color=(232, 46, 195), thickness=-1)
   cv2.putText(img, f'{id_}:veh', (x1 - 10, y1 - 3), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
 
-def traffic_counter():
-  global cars_moving_upward, cars_moving_downward
+def traffic_counter(switch):
+  global cars_moving_upward, cars_moving_downward, cars_moving_left, cars_moving_right
     
   for i in tracking_objects:
+    
     if i not in counted_ids:
+      past_x = position_data[i][0][0]
+      current_x = position_data[i][1][0]
       past_y = position_data[i][0][1]
       current_y = position_data[i][1][1]
           
       if past_y != current_y:
         counted_ids.append(i)
-              
-        if past_y > current_y:  # Moving upward
-          cars_moving_upward += 1
-                  
-        elif past_y < current_y:  # Moving downward
-          cars_moving_downward += 1
+        
+        if switch: #if switch is 1, then it's up-down, if 0, then it's left-right  
+          if past_y > current_y: # Moving upward
+            cars_moving_upward += 1
+                    
+          elif past_y < current_y: # Moving downward
+            cars_moving_downward += 1
+        
+        else:
+          if past_x > current_x: # Moving left
+            cars_moving_left += 1
+            
+          elif past_x < current_x: # Moving right
+            cars_moving_right += 1
           
-def traffic_count_plate(img):
+def traffic_count_plate(img, switch):
   cv2.rectangle(img, (100, 100 - 28), (500, 160), color=(232, 46, 195), thickness=-1)
-  cv2.putText(img, f'Downward cars: {cars_moving_downward}', (100, 100), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
-  cv2.putText(img, f'Upward cars: {cars_moving_upward}', (100, 150), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
+  
+  if switch:
+    cv2.putText(img, f'Downward cars: {cars_moving_downward}', (100, 100), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
+    cv2.putText(img, f'Upward cars: {cars_moving_upward}', (100, 150), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
 
-def draw_UI(img, results):
+  else:
+    cv2.putText(img, f'Leftward cars: {cars_moving_left}', (100, 100), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
+    cv2.putText(img, f'Rightward cars: {cars_moving_right}', (100, 150), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
+
+def draw_UI(img, x_top, y_top, x_down, y_down, results, switch):
+  cv2.rectangle(img, (x_top, y_top), (x_down, y_down), (0, 255, 0), 3)
   
   for result in results:
     
@@ -151,16 +206,20 @@ def draw_UI(img, results):
         position_data[id_] = [position_data[id_][1], bbox_center]
         
       id_plate(id_, img, x1, y1)
-      traffic_counter()
+      traffic_counter(switch)
     
-    traffic_count_plate(img)
-                            
-      # Draw the smaller verification box inside the original bounding box
-      # cv2.rectangle(img, (x1_ver_box, y1_ver_box), (x2_ver_box, y2_ver_box), color=(0, 255, 0), thickness=2)
+    traffic_count_plate(img, switch)
 
 while True:
   ret, frame = cap.read()
-  # preprocessed_frame = blackout_top_bottom_third(frame.copy())
+  
+  pred_area_top_x = 1000
+  pred_area_top_y = 450
+  pred_area_down_x = 1613
+  pred_area_down_y = 700
+  switch = 1 # True: up-down, False: left-right
+  
+  preproccessed_img = predicting_area(pred_area_top_x, pred_area_top_y, pred_area_down_x, pred_area_down_y, frame.copy())
   
   if not ret or cv2.waitKey(1) == ord('q'):
         print('Error/Stream finished')
@@ -168,16 +227,16 @@ while True:
         cv2.destroyAllWindows()
         break
   
-  #Inner bounding boxes visulization
-  # for i in tracking_objects.values():
-  #   cv2.rectangle(frame, (i[0], i[1]), (i[2], i[3]), color=(0, 255, 0), thickness=2)
+  #Inner id bounding boxes visulization
+  for i in tracking_objects.values():
+    cv2.rectangle(frame, (i[0], i[1]), (i[2], i[3]), color=(0, 255, 0), thickness=2)
     
-  results = model(frame, classes=[2, 7])
-  draw_UI(frame, results)
+  results = model(preproccessed_img)
+  draw_UI(frame, pred_area_top_x, pred_area_top_y, pred_area_down_x, pred_area_down_y, results, switch)
   cv2.imshow('YOLOv8 Real-Time Predictions', frame)
   
-  # if time.time() - start_time >= record_interval:
-  #   record_to_excel()
-  #   cars_moving_downward = 0
-  #   cars_moving_upward = 0
-  #   start_time = time.time()
+  if time.time() - start_time >= record_interval:
+    record_to_excel('karelskaya st.', 's-w/n-e', '61.703348136600276, 30.691587139403435', switch)
+    cars_moving_downward = 0
+    cars_moving_upward = 0
+    start_time = time.time()
