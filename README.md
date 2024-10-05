@@ -3,12 +3,6 @@
 <img src="assets\main_banner.png"></img>
 </p>
 
-# TABLE OF CONTENTS
-- [OVERVIEW](#overview)
-  - [PIPELINE](#pipeline)
-- [MODEL'S PERFORMANCE](#models-performance)
-- [GETTING STARTED](#getting-started)
-
 # OVERVIEW
 
 The trained yolov8n model detects the vehicles based on the collected and labeled data. Each car has its own ID, which is attributed to the object from the first moment the object is detected by the model. 
@@ -24,26 +18,28 @@ All received data is recorded in an xlsx file every certain time interval.
 - [MODEL TRAINING](#model_training)
 - [DESIGNING CUSTOM UI](#ui)
 - [VEHICLE TRACKING BY ID](#tracking)
-- [DIRECTION DETERMINATION](#direction)
 - [RECEIVED DATA RECORDING](#data_recording)
 
 ### SUMMARY
 
-<strong>TRAINING SAMPLES: 600</strong><br>
-<strong>VALIDATION SAMPLES: 103</strong><br>
+<strong>TRAINING SAMPLES: 844</strong><br>
+<strong>VALIDATION SAMPLES: 300</strong><br>
 <strong>AUG TYPES: ROTATION, BRIGHTNESS AUGS</strong><br>
-<strong>TOTAL TRAINING DATASET SIZE: 4200</strong><br>
-<strong>MaP50:</strong><br>
-<strong>MaP50-95:</strong><br>
-<strong>PREDICTIONS ONLY IN ROI(GREEN BOX)</strong><br>
+<strong>TOTAL TRAINING DATASET SIZE: 6088</strong><br>
+<strong>MaP50: 0.78</strong><br>
+<strong>MaP50-95: 0.53</strong><br>
+
+<p align='center'>
+<img src="assets\results.png"></img>
+</p>
 
 ### TRAINING SAMPLES COLLECTING
 
-The data was collected by obtaining video footage from public access traffic cameras in various cities, but mainly in Volgograd. Each video was divided into intervals in such a way as to get ~200 training samples per each unique video. During the training process, relevant data was added, which the model does not cope well with.
+The data was collected by obtaining video footage from public access traffic cameras in various cities, but mainly in Volgograd. Each video was divided into intervals in such a way as to get ~100 training samples per each unique video. During the training process, relevant data was added, which the model does not cope well with.
 
-The validation dataset consists of 180 labeled night time and daytime samples, which use 10 different subsets of data from various locations.
+The validation dataset consists of 300 labeled night time and daytime samples, which use 30 different subsets of data from various locations(10 samples per subset).
 
-The training dataset consists of 650 labeled data from 5 different videos.
+The training dataset consists of 844 labeled data from 8 different videos.
 
 <p align='center'>
 <img src="assets\train_batch2.jpg"></img>
@@ -109,10 +105,20 @@ def assign_id(bbox_center, new_x1, new_y1, new_x2, new_y2):
   return new_id
 ```
 
+### RECEIVED DATA RECORDING
+
+The function writes data to an xlsx file every n seconds. Template for writing data: [year, month, day, hour, minute, second, roadname, orientation, direction1, direction2, startpoint(coordinates)]. 
+
+Real example of recorded data for 15 seconds interval:
+
 <p align='center'>
 <img src="assets\video.gif"></img>
 </p>
 
 <p align='center'>
-<img src="assets\csv.gif"></img>
+<img src="assets\data_recording.png"></img>
+</p>
+
+<p align='center'>
+<img src="assets\map.png"></img>
 </p>
